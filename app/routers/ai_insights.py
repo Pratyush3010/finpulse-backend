@@ -8,9 +8,9 @@ from app.models.category import Category
 from app.middleware.auth import get_current_user
 from app.config import settings
 from datetime import datetime
-from decimal import Decimal
 from pydantic import BaseModel
-import google.generativeai as genai
+from google import genai
+import json
 
 router = APIRouter(prefix="/ai", tags=["AI Insights"])
 
@@ -19,6 +19,24 @@ class InsightResponse(BaseModel):
     insights: list[str]
     summary: str
     tips: list[str]
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
+@router.get("/models")
+async def list_models(current_user: User = Depends(get_current_user)):
+    """Debug endpoint to list available Gemini models."""
+    try:
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        models = [m.name for m in client.models.list()]
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/insights", response_model=InsightResponse)
@@ -70,9 +88,11 @@ Provide a JSON response with exactly these keys:
 Keep each insight and tip under 20 words. Be specific to the data above. Return valid JSON only."""
 
     try:
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         text = response.text.strip()
 
         if text.startswith("```"):
@@ -80,21 +100,59 @@ Keep each insight and tip under 20 words. Be specific to the data above. Return 
             if text.startswith("json"):
                 text = text[4:]
 
-        import json
         data = json.loads(text)
         return InsightResponse(**data)
 
-    except Exception:
+    except Exception as e:
+        print(f"Gemini error: {e}")
+        top = rows[0]
         return InsightResponse(
             insights=[
-                f"You spent most on {rows[0].name} this month.",
-                "Track daily expenses to identify saving opportunities.",
-                "Compare this month to last month for trends.",
+                f"You spent most on {top.name} ({top.type}): ${top.total:.2f}.",
+                f"You have {len(rows)} spending categories this month.",
+                "Review your top categories to find saving opportunities.",
             ],
-            summary="Keep tracking your finances consistently for better insights.",
+            summary=f"You have {len(rows)} active spending categories this month.",
             tips=[
-                "Set a monthly budget for your top spending category.",
-                "Try to save at least 20% of your income.",
-                "Review subscriptions and cancel unused ones.",
+                f"Try reducing spending in {top.name}.",
+                "Set a monthly budget for your top category.",
+                "Save at least 20% of your monthly income.",
             ],
         )
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat_with_ai(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="AI service not configured")
+
+    result = await db.execute(
+        select(Category.name, Transaction.type, Transaction.amount, Transaction.date)
+        .join(Transaction, Transaction.category_id == Category.id)
+        .where(Transaction.user_id == current_user.id)
+        .order_by(Transaction.date.desc())
+        .limit(20)
+    )
+    rows = result.all()
+    context = "\n".join([f"- {r.name} ({r.type}): ${r.amount:.2f} on {r.date.strftime('%b %d')}" for r in rows]) if rows else "No transactions yet."
+
+    prompt = f"""You are a helpful personal finance assistant.
+User's recent transactions:
+{context}
+
+User question: {request.message}
+
+Give a helpful, concise financial answer in 2-3 sentences. Be specific to their data if relevant."""
+
+    try:
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        return ChatResponse(reply=response.text.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
