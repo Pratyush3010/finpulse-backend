@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models.user import User
 from app.models.category import Category
-from app.schemas.user import UserCreate, UserLogin, UserResponse, TokenResponse, RefreshTokenRequest, UserUpdate
+from app.schemas.user import UserCreate, UserLogin, UserResponse, TokenResponse, RefreshTokenRequest, UserUpdate, ChangePasswordRequest
 from app.utils.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.middleware.auth import get_current_user
 
@@ -114,3 +114,15 @@ async def update_profile(
     await db.commit()
     await db.refresh(current_user)
     return UserResponse.model_validate(current_user)
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    current_user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+    return {"message": "Password changed successfully"}
