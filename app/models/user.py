@@ -18,3 +18,5 @@ class User(Base):
     categories: Mapped[list["Category"]] = relationship("Category", back_populates="user", cascade="all, delete-orphan")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     budgets: Mapped[list["Budget"]] = relationship("Budget", back_populates="user", cascade="all, delete-orphan")
+    recurring_transactions: Mapped[list["RecurringTransaction"]] = relationship("RecurringTransaction", back_populates="user", cascade="all, delete-orphan")
+    savings_goals: Mapped[list["SavingsGoal"]] = relationship("SavingsGoal", back_populates="user", cascade="all, delete-orphan")

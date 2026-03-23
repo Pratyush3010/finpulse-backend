@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database import create_tables
-from app.routers import auth, transactions, categories, budgets, analytics, ai_insights
+from app.routers import auth, transactions, categories, budgets, analytics, ai_insights, recurring_transactions, savings_goals
 
 
 @asynccontextmanager
@@ -32,6 +32,8 @@ app.include_router(categories.router)
 app.include_router(budgets.router)
 app.include_router(analytics.router)
 app.include_router(ai_insights.router)
+app.include_router(recurring_transactions.router)
+app.include_router(savings_goals.router)
 
 
 @app.get("/", tags=["Health"])

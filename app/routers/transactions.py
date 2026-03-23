@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.user import User
@@ -10,6 +11,8 @@ from app.schemas.transaction import TransactionCreate, TransactionUpdate, Transa
 from app.middleware.auth import get_current_user
 from datetime import date
 from typing import Optional
+import csv
+import io
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
@@ -17,11 +20,12 @@ router = APIRouter(prefix="/transactions", tags=["Transactions"])
 @router.get("", response_model=TransactionListResponse)
 async def get_transactions(
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(20, ge=1, le=500),
     type: Optional[str] = None,
     category_id: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -39,6 +43,8 @@ async def get_transactions(
         query = query.where(Transaction.date >= start_date)
     if end_date:
         query = query.where(Transaction.date <= end_date)
+    if search:
+        query = query.where(Transaction.description.ilike(f"%{search}%"))
 
     count_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = count_result.scalar()
@@ -50,6 +56,51 @@ async def get_transactions(
     transactions = result.scalars().all()
 
     return TransactionListResponse(transactions=transactions, total=total, page=page, per_page=per_page)
+
+
+@router.get("/export/csv")
+async def export_transactions_csv(
+    type: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(Transaction)
+        .options(selectinload(Transaction.category))
+        .where(Transaction.user_id == current_user.id)
+    )
+    if type:
+        query = query.where(Transaction.type == type)
+    if start_date:
+        query = query.where(Transaction.date >= start_date)
+    if end_date:
+        query = query.where(Transaction.date <= end_date)
+    query = query.order_by(Transaction.date.desc())
+
+    result = await db.execute(query)
+    transactions = result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Type", "Category", "Amount", "Description"])
+    for t in transactions:
+        writer.writerow([
+            str(t.date),
+            t.type.capitalize(),
+            t.category.name if t.category else "",
+            str(t.amount),
+            t.description or "",
+        ])
+
+    output.seek(0)
+    filename = f"finpulse_transactions_{date.today()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)

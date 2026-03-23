@@ -18,3 +18,4 @@ class Category(Base):
     user: Mapped["User"] = relationship("User", back_populates="categories")
     transactions: Mapped[list["Transaction"]] = relationship("Transaction", back_populates="category")
     budgets: Mapped[list["Budget"]] = relationship("Budget", back_populates="category")
+    recurring_transactions: Mapped[list["RecurringTransaction"]] = relationship("RecurringTransaction", back_populates="category")
