@@ -5,6 +5,10 @@ from app.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
+    pool_pre_ping=True,      # detects dead/idle connections and reconnects
+    pool_recycle=300,        # recycle connections every 5 min (before Neon suspends)
+    pool_size=5,
+    max_overflow=0,          # important for serverless/Neon
     connect_args={"ssl": "require"},
 )
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
